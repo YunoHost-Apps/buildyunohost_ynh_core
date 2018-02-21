@@ -1,0 +1,6 @@
+SOURCE_URL=https://github.com/YunoHost/build.yunohost.org/archive/0e96c11dfebd0b9ad922e176c3dd7f86a8e2730d.zip
+SOURCE_SUM=92e4d91d91a5f23b5164f1a3bbc5dba8
+SOURCE_SUM_PRG=md5sum
+SOURCE_FORMAT=zip
+SOURCE_IN_SUBDIR=true
+SOURCE_FILENAME=

@@ -1,0 +1,150 @@
+#!/bin/bash
+
+#=================================================
+# GENERIC START
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
+source /usr/share/yunohost/helpers
+
+#=================================================
+# MANAGE SCRIPT FAILURE
+#=================================================
+
+# Exit if an error occurs during the execution of the script
+ynh_abort_if_errors
+
+#=================================================
+# RETRIEVE ARGUMENTS FROM THE MANIFEST
+#=================================================
+
+domain=$YNH_APP_ARG_DOMAIN
+path_url=$YNH_APP_ARG_PATH
+
+app=$YNH_APP_INSTANCE_NAME
+
+#=================================================
+# CHECK IF THE APP CAN BE INSTALLED WITH THESE ARGS
+#=================================================
+
+final_path=/var/www/$app
+test ! -e "$final_path" || ynh_die "This path already contains a folder"
+
+# Normalize the url path syntax
+path_url=$(ynh_normalize_url_path $path_url)
+
+# Check web path availability
+ynh_webpath_available $domain $path_url
+# Register (book) web path
+ynh_webpath_register $app $domain $path_url
+
+#=================================================
+# STORE SETTINGS FROM MANIFEST
+#=================================================
+
+ynh_app_setting_set $app domain $domain
+ynh_app_setting_set $app path $path_url
+
+#=================================================
+# STANDARD MODIFICATIONS
+#=================================================
+# INSTALL DEPENDENCIES
+#=================================================
+
+ynh_install_app_dependencies simple-cdd genisoimage qemu-kvm xorriso syslinux-utils
+
+#=================================================
+# DOWNLOAD, CHECK AND UNPACK SOURCE
+#=================================================
+
+ynh_app_setting_set $app final_path $final_path
+# Download, check integrity, uncompress and patch the source from build.src
+ynh_setup_source "$final_path" build
+
+# Download, check integrity, uncompress and patch the source from cd_build.src
+ynh_setup_source "$final_path/cd_build" cd_build
+
+#=================================================
+# NGINX CONFIGURATION
+#=================================================
+
+# Create a dedicated nginx config
+if [ "$path_url" != "/" ]
+then
+	ynh_replace_string "^#sub_path_only" "" "../conf/nginx.conf"
+fi
+ynh_add_nginx_config
+
+#=================================================
+# CREATE DEDICATED USER
+#=================================================
+
+# Create a system user
+ynh_system_user_create $app
+
+#=================================================
+# SPECIFIC SETUP
+#=================================================
+# ADD A CRON FILE
+#=================================================
+
+echo "0 2 * * * root \"$final_path/cd_build/auto_build.sh\" > /dev/null 2>&1" > /etc/cron.d/$app
+
+#=================================================
+# MODIFY VARIABLE IN AUTO_BUILD SCRIPT
+#=================================================
+
+ynh_replace_string "^build_yunohost_org_dir=.*" "build_yunohost_org_dir=\"$final_path\"" "$final_path/cd_build/auto_build.sh"
+ynh_replace_string "^iso_directory=.*" "iso_directory=\"$final_path\"" "$final_path/cd_build/auto_build.sh"
+
+#=================================================
+# PATCH BUILD-YUNOHOST SCRIPT
+#=================================================
+
+# build-simple-cdd can't be run by root
+ynh_replace_string "build-simple-cdd" "sudo -u $app build-simple-cdd" "$final_path/cd_build/build-yunohost"
+
+#=================================================
+# UPDATE THE PATH IN INDEX.HTML
+#=================================================
+
+ynh_replace_string "https://build.yunohost.org" "https://$domain${path_url%/}" "$final_path/index.html"
+
+#=================================================
+# ADD ACCESS TO PASSWORDS.DAT
+#=================================================
+
+chmod o+r /var/cache/debconf/passwords.dat
+
+#=================================================
+# GENERIC FINALIZATION
+#=================================================
+# SECURE FILES AND DIRECTORIES
+#=================================================
+
+# Set permissions to app files
+chown -R $app: $final_path
+
+#=================================================
+# SETUP LOGROTATE
+#=================================================
+
+mkdir -p /var/log/$app
+chown -R $app: /var/log/$app
+# Replace the destination of the log
+ynh_replace_string "\$script_dir/ynh_build.log" "/var/log/$app/ynh_build.log" "$final_path/cd_build/auto_build.sh"
+# Use logrotate to manage application logfile
+ynh_use_logrotate
+
+#=================================================
+# SETUP SSOWAT
+#=================================================
+
+ynh_app_setting_set $app skipped_uris "/"
+
+#=================================================
+# RELOAD NGINX
+#=================================================
+
+systemctl reload nginx
